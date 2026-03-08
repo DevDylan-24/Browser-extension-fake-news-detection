@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FactGuard AI</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+
+  <div class="sidebar">
+
+    
+
+    <!-- SHARED HEADER -->
+    <div class="sidebar-header" id="main-header">
+      <div class="logo-icon">🔍</div>
+      <div>
+        <div class="logo-text">FactGuard AI</div>
+        <div class="logo-sub" id="header-sub">Fake News Detector</div>
+      </div>
+    </div>
+
+    <!-- SCROLLABLE BODY -->
+    <div class="sidebar-inner">
+
+      <!-- VIEW: LOGGED OUT -->
+      <div id="view-loggedout" class="view active">
+        <div class="view-inner">
+
+          <button class="analyse-btn" id="analyse-btn-lo">
+            <div class="analyse-icon">⚡</div>
+            <div class="analyse-text">
+              <strong>Analyse This Page</strong>
+              <span>Check credibility score</span>
+            </div>
+          </button>
+
+          <div class="divider"><hr><span>Account</span><hr></div>
+
+          <div class="auth-prompt">
+            <p>Sign in to unlock <span>history tracking</span>, <span>dashboard</span> &amp; <span>AI media detection</span>.</p>
+            <div class="btn-row">
+              <button class="btn btn-primary" id="go-login">Log In</button>
+              <button class="btn btn-outline" id="go-signup">Sign Up</button>
+            </div>
+          </div>
+
+          <div class="dashboard-btn locked">
+            <div class="dash-icon">📊</div>
+            <div class="dash-text">
+              <strong>Dashboard</strong>
+              <span>History &amp; media check</span>
+            </div>
+            <div class="lock-badge">🔒</div>
+          </div>
+
+          <div class="nav-caption">Sign in to unlock all features</div>
+        </div>
+      </div>
+
+      <!-- VIEW: LOGIN -->
+      <div id="view-login" class="view">
+        <div class="view-inner">
+
+          <div class="auth-card-header">
+            <div class="auth-icon">🔐</div>
+            <h2 class="auth-title">Welcome Back</h2>
+            <p class="auth-subtitle">Sign in to your FactGuard account</p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Email</label>
+            <input class="form-input" type="email" id="login-email" placeholder="you@example.com" autocomplete="off">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <input class="form-input" type="password" id="login-password" placeholder="••••••••">
+          </div>
+
+          <div class="form-error hidden" id="login-error">Incorrect email or password.</div>
+
+          <button class="btn btn-primary btn-full" id="login-submit">Log In</button>
+
+          <div class="auth-switch">
+            Don't have an account? <span class="auth-link" id="switch-to-signup">Sign Up</span>
+          </div>
+
+          <div class="back-link">
+            <span class="auth-link" id="back-from-login">← Back</span>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- VIEW: SIGN UP -->
+      <div id="view-signup" class="view">
+        <div class="view-inner">
+
+          <div class="auth-card-header">
+            <div class="auth-icon">✨</div>
+            <h2 class="auth-title">Create Account</h2>
+            <p class="auth-subtitle">Join FactGuard to track your analyses</p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Full Name</label>
+            <input class="form-input" type="text" id="signup-name" placeholder="John Doe" autocomplete="off">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Email</label>
+            <input class="form-input" type="email" id="signup-email" placeholder="you@example.com" autocomplete="off">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <input class="form-input" type="password" id="signup-password" placeholder="Min. 8 characters">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Confirm Password</label>
+            <input class="form-input" type="password" id="signup-confirm" placeholder="Repeat password">
+          </div>
+
+          <div class="form-error hidden" id="signup-error">Passwords do not match.</div>
+
+          <button class="btn btn-primary btn-full" id="signup-submit">Create Account</button>
+
+          <div class="auth-switch">
+            Already have an account? <span class="auth-link" id="switch-to-login">Log In</span>
+          </div>
+
+          <div class="back-link">
+            <span class="auth-link" id="back-from-signup">← Back</span>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- VIEW: LOGGED IN -->
+      <div id="view-loggedin" class="view">
+        <div class="view-inner">
+
+          <div class="user-chip">
+            <div class="avatar" id="user-avatar">JD</div>
+            <div class="user-info">
+              <strong id="user-name-display">John Doe</strong>
+              <span>● Active</span>
+            </div>
+            <button class="logout-inline" id="logout-btn">Log out</button>
+          </div>
+
+          <button class="analyse-btn" id="analyse-btn-li">
+            <div class="analyse-icon">⚡</div>
+            <div class="analyse-text">
+              <strong>Analyse This Page</strong>
+              <span>Check credibility score</span>
+            </div>
+          </button>
+
+          <div class="divider"><hr><span>Navigation</span><hr></div>
+
+          <div class="dashboard-btn unlocked" id="go-dashboard">
+            <div class="dash-icon">📊</div>
+            <div class="dash-text">
+              <strong>Dashboard</strong>
+              <span>History &amp; media check</span>
+            </div>
+            <div class="lock-badge accent">→</div>
+          </div>
+
+          <div class="nav-caption">Click Analyse to scan this page</div>
+        </div>
+      </div>
+
+      <!-- VIEW: SCANNING -->
+      <div id="view-scanning" class="view">
+        <div class="view-inner centered">
+          <div class="scan-animation">
+            <div class="scan-ring r1"></div>
+            <div class="scan-ring r2"></div>
+            <div class="scan-core">🔍</div>
+          </div>
+          <div class="scan-title">Analysing Page...</div>
+          <div class="scan-sub">Checking sources, language &amp; credibility signals</div>
+          <div class="scan-progress-wrap">
+            <div class="scan-progress-bar" id="scan-bar"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW: RESULTS -->
+      <div id="view-results" class="view">
+        <div class="view-inner" style="padding-bottom:80px;">
+        
+          <div id="result" style="color: aquamarine;"></div>
+          <div class="score-section">
+            <div class="score-label">Credibility Score</div>
+
+            <div class="score-display">
+              <div class="score-pct" id="score-number">—</div>
+              <div class="score-verdict" id="score-verdict">—</div>
+            </div>
+
+            <div class="score-bar-wrap">
+              <div class="score-bar-track">
+                <div class="score-bar-fill" id="score-bar-fill"></div>
+              </div>
+              <div class="score-bar-labels">
+                <span>0</span>
+                <span>Likely False</span>
+                <span>Uncertain</span>
+                <span>Credible</span>
+                <span>100</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="analysis-card">
+            <h4>Signals Detected</h4>
+            <div id="signals-list"></div>
+            <div class="analysis-summary" id="analysis-summary"></div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- VIEW: DASHBOARD -->
+      <div id="view-dashboard" class="view">
+
+        <div class="dash-header">
+          <div class="logo-icon small">📊</div>
+          <div>
+            <div class="logo-text">Dashboard</div>
+            <div class="logo-sub">Your Analysis Hub</div>
+          </div>
+          <button class="dash-close" id="dash-close">✕</button>
+        </div>
+
+        <div class="view-inner" style="padding-bottom:16px;">
+
+          <div class="divider"><hr><span>Last Analysis</span><hr></div>
+
+          <div class="last-analysis-card">
+            <div class="card-top-row">
+              <div class="card-title">Most Recent Scan</div>
+              <div class="time-stamp" id="dash-timestamp">—</div>
+            </div>
+            <div class="last-url" id="dash-last-url">No scans yet</div>
+            <div class="score-pill" id="dash-score-pill">—</div>
+            <div class="analysis-summary" id="dash-summary"
+              style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+              Run your first scan to see results here.
+            </div>
+          </div>
+
+          <div class="divider"><hr><span>History</span><hr></div>
+
+          <div class="history-list" id="history-list">
+            <div class="history-item">
+              <div class="hist-score ok">91%</div>
+              <div class="hist-info">
+                <strong>bbc.co.uk/news/article-title</strong>
+                <span>Today, 09:14 — Credible</span>
+              </div>
+              <span class="hist-arrow">›</span>
+            </div>
+            <div class="history-item">
+              <div class="hist-score bad">28%</div>
+              <div class="hist-info">
+                <strong>unknownblog.net/breaking-story</strong>
+                <span>Yesterday, 22:41 — Likely False</span>
+              </div>
+              <span class="hist-arrow">›</span>
+            </div>
+            <div class="history-item">
+              <div class="hist-score warn">55%</div>
+              <div class="hist-info">
+                <strong>medium.com/@user/opinion-post</strong>
+                <span>Yesterday, 14:07 — Uncertain</span>
+              </div>
+              <span class="hist-arrow">›</span>
+            </div>
+            <div class="history-item">
+              <div class="hist-score ok">84%</div>
+              <div class="hist-info">
+                <strong>reuters.com/world/article</strong>
+                <span>Feb 19 — Credible</span>
+              </div>
+              <span class="hist-arrow">›</span>
+            </div>
+          </div>
+
+          <div class="divider"><hr><span>AI Media Detector</span><hr></div>
+
+          <div class="media-section">
+            <h4>Check Media Files</h4>
+            <p>Upload a local image or video to detect if it was AI-generated or manipulated.</p>
+            <div class="upload-zone" id="upload-zone">
+              <div class="upload-icon">📎</div>
+              <p>Drop file here or click to browse</p>
+              <small>Max 50MB · JPG, PNG, MP4, MOV</small>
+              <input type="file" id="media-upload" accept="image/*,video/*" style="display:none;">
+            </div>
+            <div class="upload-types">
+              <div class="type-chip" id="chip-image">🖼 Image</div>
+              <div class="type-chip" id="chip-video">🎥 Video</div>
+            </div>
+          </div>
+
+          <button class="btn btn-outline btn-full" id="logout-from-dash" style="margin-top:4px;">
+            🚪 Log Out
+          </button>
+
+        </div>
+      </div>
+
+    </div><!-- end sidebar-inner -->
+
+    <!-- STICKY RESULTS FOOTER -->
+    <div class="action-footer hidden" id="results-footer">
+      <div class="btn-row">
+        <button class="btn-sm" id="footer-go-dashboard">
+          <span class="btn-icon">📊</span>
+          <span>Dashboard</span>
+        </button>
+        <button class="btn-sm" id="footer-rescan">
+          <span class="btn-icon">🔄</span>
+          <span>Rescan</span>
+        </button>
+        <button class="btn-sm danger" id="footer-logout">
+          <span class="btn-icon">🚪</span>
+          <span>Log Out</span>
+        </button>
+      </div>
+    </div>
+
+  </div><!-- end sidebar -->
+
+  <script src="popup.js"></script>
+</body>
+</html>
