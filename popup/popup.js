@@ -92,97 +92,99 @@ function hideError(id) {
   if (el) el.classList.add('hidden');
 }
 
-// ─── Scan Logic ───────────────────────────────────────────────
+// ─── API ──────────────────────────────────────────────────────
+async function analyseText(text) {
+  const response = await fetch('http://localhost:5000/predict', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!response.ok) throw new Error(`Server error: ${response.status}`);
+  return response.json(); // expects { probability: 0.0–1.0 }
+}
 
-// Mock data pool for demo purposes
-const mockScans = [
-  {
-    score: 87,
-    verdict: 'Credible',
-    color: 'green',
-    signals: [
-      { type: 'ok',   text: 'Author identity verified against known bylines' },
-      { type: 'ok',   text: 'Domain established over 10 years ago' },
-      { type: 'ok',   text: 'Primary sources cited and verifiable' },
-      { type: 'warn', text: 'One external link leads to opinion content' },
-      { type: 'ok',   text: 'No sensationalist language patterns found' },
-    ],
-    summary: 'This article meets most credibility standards. Sources are traceable and the writing style is measured and factual. Minor concern with one linked opinion piece.',
-  },
-  {
-    score: 62,
-    verdict: 'Uncertain',
-    color: 'amber',
-    signals: [
-      { type: 'bad',  text: 'Sensationalist headline language detected' },
-      { type: 'warn', text: 'Author credibility could not be verified' },
-      { type: 'ok',   text: 'Domain registered over 5 years ago' },
-      { type: 'warn', text: '2 of 5 cited sources are unreliable' },
-      { type: 'ok',   text: 'No known plagiarised content found' },
-    ],
-    summary: 'This article uses emotionally charged language and references unverified sources. Exercise caution before sharing. Cross-check with established outlets.',
-  },
-  {
-    score: 21,
-    verdict: 'Likely False',
-    color: 'red',
-    signals: [
-      { type: 'bad', text: 'Multiple claims contradict verified facts' },
-      { type: 'bad', text: 'Domain registered within the last 3 months' },
-      { type: 'bad', text: 'Author is unverifiable — likely pseudonym' },
-      { type: 'warn', text: 'Extreme emotional language throughout' },
-      { type: 'bad', text: 'No credible sources cited anywhere in article' },
-    ],
-    summary: 'This article exhibits strong indicators of misinformation. Several factual claims have been debunked by independent fact-checkers. Do not share without thorough verification.',
-  },
-];
+// ─── Derive verdict + color from fake-news probability ────────
+// probability = likelihood of being FAKE (0 = credible, 1 = fake)
+// We display credibility score = (1 - probability) * 100
+function probabilityToResult(probability) {
+  const credibility = Math.round((1 - probability) * 100);
 
-document.getElementById("analyse-btn-lo").addEventListener("click", async () => {
+  let verdict, color, signals, summary;
 
-    let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (credibility >= 70) {
+    verdict = 'Credible';
+    color   = 'green';
+    signals = [
+      { type: 'ok',   text: 'Low probability of fake content detected' },
+      { type: 'ok',   text: 'Language patterns consistent with factual reporting' },
+      { type: 'ok',   text: 'Writing style aligns with established news sources' },
+    ];
+    summary = 'This page shows a low likelihood of containing fake or misleading content. Always verify with additional sources before sharing.';
+  } else if (credibility >= 40) {
+    verdict = 'Uncertain';
+    color   = 'amber';
+    signals = [
+      { type: 'warn', text: 'Moderate indicators of misleading content found' },
+      { type: 'warn', text: 'Language patterns show some irregularities' },
+      { type: 'ok',   text: 'Some content appears factual' },
+    ];
+    summary = 'This page contains mixed signals. Exercise caution and cross-check key claims with established news outlets before sharing.';
+  } else {
+    verdict = 'Likely Fake';
+    color   = 'red';
+    signals = [
+      { type: 'bad',  text: 'High probability of fake or misleading content' },
+      { type: 'bad',  text: 'Language patterns consistent with misinformation' },
+      { type: 'warn', text: 'Claims could not be independently verified' },
+    ];
+    summary = 'This page shows strong indicators of fake or misleading content. Do not share without thorough independent verification.';
+  }
 
-    chrome.tabs.sendMessage(tab.id, { action: "extractContent" }, (response) => {
+  return { score: credibility, verdict, color, signals, summary };
+}
 
-        console.log(response);
-
-        document.getElementById("result").innerText =
-            "Text length: " + response.text.length +
-            "\nImages found: " + response.images.length;
-    });
-
-});
-
+// ─── Scan ─────────────────────────────────────────────────────
 function runScan() {
   showView('scanning');
   scanBar.style.width = '0%';
 
-  // Animate progress bar
+  // Animate the loading bar while waiting for the API
   let progress = 0;
   const interval = setInterval(() => {
-    progress += Math.random() * 18 + 4;
-    if (progress > 95) progress = 95;
+    progress += Math.random() * 12 + 3;
+    if (progress > 90) progress = 90;
     scanBar.style.width = progress + '%';
   }, 200);
 
-  // Pick a random mock result
-  const result = mockScans[Math.floor(Math.random() * mockScans.length)];
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs[0];
+    const url = tab?.url || 'unknown page';
 
-  setTimeout(() => {
-    clearInterval(interval);
-    scanBar.style.width = '100%';
+    chrome.tabs.sendMessage(tab.id, { action: 'extractContent' }, async (response) => {
+      try {
+        if (chrome.runtime.lastError || !response) {
+          throw new Error('Could not extract page content.');
+        }
+        console.log(response)
+        // Trim to 10,000 characters for analysis
+        const text = response.text.substring(0, 10000);
+        const analysis = await analyseText(text);
 
-    setTimeout(() => {
-      // Get current tab URL if in extension context, else use mock
-      if (typeof chrome !== 'undefined' && chrome.tabs) {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          const url = tabs[0]?.url || 'unknown page';
+        clearInterval(interval);
+        scanBar.style.width = '100%';
+
+        setTimeout(() => {
+          const result = probabilityToResult(analysis.probability);
           finishScan(result, url);
-        });
-      } else {
-        finishScan(result, 'newswebsite.com/article/demo-story');
+        }, 300);
+
+      } catch (err) {
+        clearInterval(interval);
+        scanBar.style.width = '0%';
+        showScanError(err.message);
       }
-    }, 300);
-  }, 2200);
+    });
+  });
 }
 
 function finishScan(result, url) {
@@ -198,7 +200,7 @@ function finishScan(result, url) {
   };
 
   // Render score bar
-  renderScoreBar(result.score, result.color);
+  renderScoreBar(result.score);
 
   // Render score text
   const colorMap = { green: 'var(--green)', amber: 'var(--amber)', red: 'var(--red)' };
@@ -224,20 +226,38 @@ function finishScan(result, url) {
   showView('results');
 }
 
-// ─── Score Bar Rendering ──────────────────────────────────────
-function renderScoreBar(score, colorKey) {
-  const colorMap = { green: '#00f5a0', amber: '#ffb020', red: '#ff4d6d' };
-  const color = colorMap[colorKey] || '#ffb020';
+// ─── Scan Error ───────────────────────────────────────────────
+function showScanError(message) {
+  // Show the results view with an error state instead of scores
+  document.getElementById('score-number').textContent = '—';
+  document.getElementById('score-number').style.color = 'var(--text-dim)';
+  document.getElementById('score-verdict').textContent = 'Error';
+  document.getElementById('score-verdict').style.color = 'var(--red)';
 
-  // Gradient fill: always red→amber→green across full bar,
-  // clipped by the actual score width.
   const fill = document.getElementById('score-bar-fill');
+  fill.style.width = '0%';
+
+  document.getElementById('signals-list').innerHTML = `
+    <div class="signal-row">
+      <div class="signal-dot bad"></div>
+      <div class="signal-text">${message || 'An unexpected error occurred.'}</div>
+    </div>`;
+  document.getElementById('analysis-summary').textContent =
+    'Could not complete the analysis. Make sure the server is running and try rescanning.';
+
+  showView('results');
+}
+function renderScoreBar(score) {
+  const fill = document.getElementById('score-bar-fill');
+  // Reset width to 0 first so the CSS transition animates from scratch each scan
+  fill.style.transition = 'none';
+  fill.style.width = '0%';
+  // Paint the full red→amber→green gradient; element width does the clipping
+  fill.style.background = 'linear-gradient(90deg, #ff4d6d 0%, #ffb020 45%, #00f5a0 100%)';
+  // Force reflow so the transition fires on the next frame
+  fill.getBoundingClientRect();
+  fill.style.transition = 'width 0.9s cubic-bezier(0.22, 1, 0.36, 1)';
   fill.style.width = score + '%';
-  fill.style.background = `linear-gradient(90deg, #ff4d6d 0%, #ffb020 40%, #00f5a0 100%)`;
-  // Clip the gradient to only show up to the score position
-  // by setting background-size relative to the full track
-  fill.style.backgroundSize = `${(100 / score) * 100}% 100%`;
-  fill.style.backgroundRepeat = 'no-repeat';
 }
 
 // ─── Dashboard Population ─────────────────────────────────────
