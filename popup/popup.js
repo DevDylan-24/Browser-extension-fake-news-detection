@@ -1,9 +1,3 @@
-/* ============================================================
-   FactGuard AI — popup.js
-   Handles all view navigation, auth simulation, scan flow,
-   speedometer rendering, and dashboard population.
-   ============================================================ */
-
 // ─── App State ────────────────────────────────────────────────
 const state = {
   isLoggedIn: false,
@@ -103,44 +97,32 @@ async function analyseText(text) {
   return response.json(); // expects { probability: 0.0–1.0 }
 }
 
-// ─── Derive verdict + color from fake-news probability ────────
-// probability = likelihood of being FAKE (0 = credible, 1 = fake)
-// We display credibility score = (1 - probability) * 100
-function probabilityToResult(probability) {
+// ─── Build result object from full server response ────────────
+// The server now returns signals[] and summary directly.
+// This function just derives verdict + color and passes signals through.
+function buildResult(apiResponse) {
+  const probability = apiResponse.probability;
   const credibility = Math.round((1 - probability) * 100);
 
-  let verdict, color, signals, summary;
-
+  let verdict, color;
   if (credibility >= 70) {
     verdict = 'Credible';
     color   = 'green';
-    signals = [
-      { type: 'ok',   text: 'Low probability of fake content detected' },
-      { type: 'ok',   text: 'Language patterns consistent with factual reporting' },
-      { type: 'ok',   text: 'Writing style aligns with established news sources' },
-    ];
-    summary = 'This page shows a low likelihood of containing fake or misleading content. Always verify with additional sources before sharing.';
   } else if (credibility >= 40) {
     verdict = 'Uncertain';
     color   = 'amber';
-    signals = [
-      { type: 'warn', text: 'Moderate indicators of misleading content found' },
-      { type: 'warn', text: 'Language patterns show some irregularities' },
-      { type: 'ok',   text: 'Some content appears factual' },
-    ];
-    summary = 'This page contains mixed signals. Exercise caution and cross-check key claims with established news outlets before sharing.';
   } else {
     verdict = 'Likely Fake';
     color   = 'red';
-    signals = [
-      { type: 'bad',  text: 'High probability of fake or misleading content' },
-      { type: 'bad',  text: 'Language patterns consistent with misinformation' },
-      { type: 'warn', text: 'Claims could not be independently verified' },
-    ];
-    summary = 'This page shows strong indicators of fake or misleading content. Do not share without thorough independent verification.';
   }
 
-  return { score: credibility, verdict, color, signals, summary };
+  return {
+    score:   credibility,
+    verdict,
+    color,
+    signals: apiResponse.signals  || [],
+    summary: apiResponse.summary  || '',
+  };
 }
 
 // ─── Scan ─────────────────────────────────────────────────────
@@ -165,8 +147,8 @@ function runScan() {
         if (chrome.runtime.lastError || !response) {
           throw new Error('Could not extract page content.');
         }
-        console.log(response)
-        // Trim to 10,000 characters for analysis
+
+        // Trim to 10,000 chars as per original implementation
         const text = response.text.substring(0, 10000);
         const analysis = await analyseText(text);
 
@@ -174,7 +156,7 @@ function runScan() {
         scanBar.style.width = '100%';
 
         setTimeout(() => {
-          const result = probabilityToResult(analysis.probability);
+          const result = buildResult(analysis);
           finishScan(result, url);
         }, 300);
 
@@ -212,12 +194,15 @@ function finishScan(result, url) {
   verdictEl.textContent = result.verdict;
   verdictEl.style.color = c;
 
-  // Render signals
+  // Render signals — each signal has { type, label, detail }
   const signalsList = document.getElementById('signals-list');
   signalsList.innerHTML = result.signals.map(s =>
     `<div class="signal-row">
        <div class="signal-dot ${s.type}"></div>
-       <div class="signal-text">${s.text}</div>
+       <div class="signal-text">
+         <span class="signal-label">${s.label || ''}</span>
+         ${s.detail ? `<span class="signal-detail">${s.detail}</span>` : ''}
+       </div>
      </div>`
   ).join('');
 
