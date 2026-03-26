@@ -1,3 +1,9 @@
+/* ============================================================
+   FactGuard AI — popup.js
+   Handles all view navigation, auth simulation, scan flow,
+   speedometer rendering, and dashboard population.
+   ============================================================ */
+
 // ─── App State ────────────────────────────────────────────────
 const state = {
   isLoggedIn: false,
@@ -98,30 +104,22 @@ async function analyseText(text) {
 }
 
 // ─── Build result object from full server response ────────────
-// The server now returns signals[] and summary directly.
-// This function just derives verdict + color and passes signals through.
 function buildResult(apiResponse) {
   const probability = apiResponse.probability;
   const credibility = Math.round((1 - probability) * 100);
 
   let verdict, color;
-  if (credibility >= 70) {
-    verdict = 'Credible';
-    color   = 'green';
-  } else if (credibility >= 40) {
-    verdict = 'Uncertain';
-    color   = 'amber';
-  } else {
-    verdict = 'Likely Fake';
-    color   = 'red';
-  }
+  if (credibility >= 70)      { verdict = 'Credible';     color = 'green'; }
+  else if (credibility >= 40) { verdict = 'Uncertain';    color = 'amber'; }
+  else                        { verdict = 'Likely Fake';  color = 'red';   }
 
   return {
-    score:   credibility,
+    score:          credibility,
     verdict,
     color,
-    signals: apiResponse.signals  || [],
-    summary: apiResponse.summary  || '',
+    signals:        apiResponse.signals        || [],
+    summary:        apiResponse.summary        || '',
+    contentSummary: apiResponse.content_summary || '',
   };
 }
 
@@ -172,13 +170,14 @@ function runScan() {
 function finishScan(result, url) {
   // Store last scan
   state.lastScan = {
-    score:   result.score,
-    verdict: result.verdict,
-    color:   result.color,
+    score:          result.score,
+    verdict:        result.verdict,
+    color:          result.color,
     url,
-    signals: result.signals,
-    summary: result.summary,
-    time:    'Just now',
+    signals:        result.signals,
+    summary:        result.summary,
+    contentSummary: result.contentSummary,
+    time:           'Just now',
   };
 
   // Render score bar
@@ -187,26 +186,36 @@ function finishScan(result, url) {
   // Render score text
   const colorMap = { green: 'var(--green)', amber: 'var(--amber)', red: 'var(--red)' };
   const c = colorMap[result.color];
-  const numEl = document.getElementById('score-number');
+  const numEl     = document.getElementById('score-number');
   const verdictEl = document.getElementById('score-verdict');
-  numEl.textContent = result.score + '%';
-  numEl.style.color = c;
+  numEl.textContent     = result.score + '%';
+  numEl.style.color     = c;
   verdictEl.textContent = result.verdict;
   verdictEl.style.color = c;
 
-  // Render signals — each signal has { type, label, detail }
+  // Render signals — each has { type, label, detail, snippet }
   const signalsList = document.getElementById('signals-list');
-  signalsList.innerHTML = result.signals.map(s =>
-    `<div class="signal-row">
-       <div class="signal-dot ${s.type}"></div>
-       <div class="signal-text">
-         <span class="signal-label">${s.label || ''}</span>
-         ${s.detail ? `<span class="signal-detail">${s.detail}</span>` : ''}
-       </div>
-     </div>`
+  signalsList.innerHTML = result.signals.map(s => `
+    <div class="signal-row">
+      <div class="signal-dot ${s.type}"></div>
+      <div class="signal-text">
+        <span class="signal-label">${s.label || ''}</span>
+        ${s.detail  ? `<span class="signal-detail">${s.detail}</span>` : ''}
+        ${s.snippet ? `<span class="signal-snippet">"${s.snippet}"</span>` : ''}
+      </div>
+    </div>`
   ).join('');
 
-  document.getElementById('analysis-summary').textContent = result.summary;
+  // Render content summary (extractive) + credibility assessment
+  const contentSummaryEl = document.getElementById('content-summary');
+  const assessmentEl     = document.getElementById('analysis-summary');
+
+  contentSummaryEl.textContent = result.contentSummary || '';
+  assessmentEl.textContent     = result.summary        || '';
+
+  // Hide the content summary block if the server returned nothing
+  const summaryCard = document.getElementById('summary-card');
+  summaryCard.style.display = (result.contentSummary || result.summary) ? '' : 'none';
 
   showView('results');
 }

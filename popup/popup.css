@@ -520,6 +520,29 @@ html, body {
   line-height: 1.5;
 }
 
+.signal-snippet {
+  margin-top: 5px;
+  padding: 6px 8px;
+  background: var(--surface2);
+  border-left: 2px solid var(--border2);
+  border-radius: 0 4px 4px 0;
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  color: var(--text-mid);
+  line-height: 1.6;
+  font-style: italic;
+}
+
+.content-summary {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  color: var(--text-mid);
+  line-height: 1.8;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
 .analysis-summary {
   font-family: 'Space Mono', monospace;
   font-size: 10px; color: var(--text-dim);
