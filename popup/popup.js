@@ -15,13 +15,14 @@ const state = {
 
 // ─── DOM References ───────────────────────────────────────────
 const views = {
-  loggedout:  document.getElementById('view-loggedout'),
-  login:      document.getElementById('view-login'),
-  signup:     document.getElementById('view-signup'),
-  loggedin:   document.getElementById('view-loggedin'),
-  scanning:   document.getElementById('view-scanning'),
-  results:    document.getElementById('view-results'),
-  dashboard:  document.getElementById('view-dashboard'),
+  loggedout:      document.getElementById('view-loggedout'),
+  login:          document.getElementById('view-login'),
+  signup:         document.getElementById('view-signup'),
+  loggedin:       document.getElementById('view-loggedin'),
+  scanning:       document.getElementById('view-scanning'),
+  results:        document.getElementById('view-results'),
+  dashboard:      document.getElementById('view-dashboard'),
+  historydetail:  document.getElementById('view-history-detail'),
 };
 
 const headerSub      = document.getElementById('header-sub');
@@ -36,44 +37,50 @@ function showView(name) {
   state.previousView = state.currentView;
   state.currentView = name;
 
-  // Header visibility — dashboard has its own header
-  mainHeader.style.display = (name === 'dashboard') ? 'none' : 'flex';
+  // These views have their own internal header — hide the shared one
+  const selfHeaded = ['dashboard', 'historydetail'];
+  mainHeader.style.display = selfHeaded.includes(name) ? 'none' : 'flex';
 
-  // Results footer — only visible on results view
+  // Results footer only visible on results view
   resultsFooter.classList.toggle('hidden', name !== 'results');
 
-  // Update header subtitle
   const subs = {
-    loggedout: 'Fake News Detector',
-    login:     'Log In',
-    signup:    'Create Account',
-    loggedin:  'Fake News Detector',
-    scanning:  'Analysing...',
-    results:   'Scan Complete',
-    dashboard: 'Dashboard',
+    loggedout:     'Fake News Detector',
+    login:         'Log In',
+    signup:        'Create Account',
+    loggedin:      'Fake News Detector',
+    scanning:      'Analysing...',
+    results:       'Scan Complete',
+    dashboard:     'Dashboard',
+    historydetail: 'Scan Details',
   };
   headerSub.textContent = subs[name] || 'FactGuard AI';
 }
 
 // ─── Auth Helpers ─────────────────────────────────────────────
-function doLogin(name, email) {
+function doLoginSuccess(userData, token) {
+  const name = userData.name || '';
   const parts = name.trim().split(' ');
   const initials = parts.length >= 2
     ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
     : name.slice(0, 2).toUpperCase();
 
   state.isLoggedIn = true;
-  state.user = { name: name.trim(), email, initials };
+  state.user       = { name, email: userData.email, initials, id: userData.id };
+  state.token      = token;
 
-  document.getElementById('user-name-display').textContent = name.trim();
-  document.getElementById('user-avatar').textContent = initials;
+  chrome.storage.local.set({ factguard_token: token, factguard_user: userData });
+
+  document.getElementById('user-name-display').textContent = name;
+  document.getElementById('user-avatar').textContent       = initials;
 }
 
 function doLogout() {
   state.isLoggedIn = false;
-  state.user = null;
-  // Clear form fields
-  ['login-email', 'login-password', 'signup-name', 'signup-email', 'signup-password', 'signup-confirm']
+  state.user       = null;
+  state.token      = null;
+  chrome.storage.local.remove(['factguard_token', 'factguard_user']);
+  ['login-email','login-password','signup-name','signup-email','signup-password','signup-confirm']
     .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   hideError('login-error');
   hideError('signup-error');
@@ -92,32 +99,47 @@ function hideError(id) {
   if (el) el.classList.add('hidden');
 }
 
-// ─── API ──────────────────────────────────────────────────────
-async function analyseText(text) {
-  const response = await fetch('http://localhost:5000/predict', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+// ─── API BASE ─────────────────────────────────────────────────
+const API = 'http://localhost:5000';
+
+function authHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  if (state.token) h['Authorization'] = `Bearer ${state.token}`;
+  return h;
+}
+
+async function apiPost(path, body) {
+  const res = await fetch(`${API}${path}`, {
+    method:  'POST',
+    headers: authHeaders(),
+    body:    JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`Server error: ${response.status}`);
-  return response.json(); // expects { probability: 0.0–1.0 }
+  return { status: res.status, data: await res.json() };
+}
+
+async function apiGet(path) {
+  const res = await fetch(`${API}${path}`, { headers: authHeaders() });
+  return { status: res.status, data: await res.json() };
 }
 
 // ─── Build result object from full server response ────────────
 function buildResult(apiResponse) {
-  const probability = apiResponse.probability;
-  const credibility = Math.round((1 - probability) * 100);
+  // Server now returns the already-adjusted score when images were analysed
+  const score = apiResponse.score !== undefined
+    ? apiResponse.score
+    : Math.round((1 - apiResponse.probability) * 100);
 
   let verdict, color;
-  if (credibility >= 70)      { verdict = 'Credible';     color = 'green'; }
-  else if (credibility >= 40) { verdict = 'Uncertain';    color = 'amber'; }
-  else                        { verdict = 'Likely Fake';  color = 'red';   }
+  if (score >= 70)      { verdict = 'Credible';    color = 'green'; }
+  else if (score >= 40) { verdict = 'Uncertain';   color = 'amber'; }
+  else                  { verdict = 'Likely Fake'; color = 'red';   }
 
   return {
-    score:          credibility,
+    score,
     verdict,
     color,
     signals:        apiResponse.signals        || [],
+    imageSignals:   apiResponse.image_signals  || [],
     summary:        apiResponse.summary        || '',
     contentSummary: apiResponse.content_summary || '',
   };
@@ -128,7 +150,9 @@ function runScan() {
   showView('scanning');
   scanBar.style.width = '0%';
 
-  // Animate the loading bar while waiting for the API
+  // Read the image analysis toggle — stored on state so it persists across views
+  const analyseImages = state.imageAnalysisEnabled || false;
+
   let progress = 0;
   const interval = setInterval(() => {
     progress += Math.random() * 12 + 3;
@@ -138,26 +162,29 @@ function runScan() {
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
-    const url = tab?.url || 'unknown page';
+    const url = tab?.url || '';
 
     chrome.tabs.sendMessage(tab.id, { action: 'extractContent' }, async (response) => {
       try {
         if (chrome.runtime.lastError || !response) {
           throw new Error('Could not extract page content.');
         }
+        const text   = response.text.substring(0, 10000);
+        const images = response.images || [];
 
-        // Trim to 10,000 chars as per original implementation
-        const text = response.text.substring(0, 10000);
-        const analysis = await analyseText(text);
+        const { status, data } = await apiPost('/predict', {
+          text,
+          url,
+          images,
+          analyse_images: analyseImages,
+        });
+
+        if (status !== 200) throw new Error(data.error || 'Analysis failed.');
 
         clearInterval(interval);
         scanBar.style.width = '100%';
 
-        setTimeout(() => {
-          const result = buildResult(analysis);
-          finishScan(result, url);
-        }, 300);
-
+        setTimeout(() => finishScan(buildResult(data), url), 300);
       } catch (err) {
         clearInterval(interval);
         scanBar.style.width = '0%';
@@ -167,53 +194,56 @@ function runScan() {
   });
 }
 
+// ─── Signal Row Renderer (shared by scan results + history detail) ────────────
+function renderSignalRows(signals) {
+  if (!signals || signals.length === 0) return '';
+  return signals.map(s => `
+    <div class="signal-row">
+      <div class="signal-dot ${s.type}"></div>
+      <div class="signal-text">
+        <span class="signal-label">${s.label || ''}</span>
+        ${s.detail  ? `<span class="signal-detail">${s.detail}</span>`           : ''}
+        ${s.snippet ? `<span class="signal-snippet">"${s.snippet}"</span>` : ''}
+      </div>
+    </div>`).join('');
+}
+
 function finishScan(result, url) {
-  // Store last scan
   state.lastScan = {
     score:          result.score,
     verdict:        result.verdict,
     color:          result.color,
     url,
     signals:        result.signals,
+    imageSignals:   result.imageSignals,
     summary:        result.summary,
     contentSummary: result.contentSummary,
     time:           'Just now',
   };
 
-  // Render score bar
   renderScoreBar(result.score);
 
-  // Render score text
   const colorMap = { green: 'var(--green)', amber: 'var(--amber)', red: 'var(--red)' };
   const c = colorMap[result.color];
-  const numEl     = document.getElementById('score-number');
-  const verdictEl = document.getElementById('score-verdict');
-  numEl.textContent     = result.score + '%';
-  numEl.style.color     = c;
-  verdictEl.textContent = result.verdict;
-  verdictEl.style.color = c;
+  document.getElementById('score-number').textContent  = result.score + '%';
+  document.getElementById('score-number').style.color  = c;
+  document.getElementById('score-verdict').textContent = result.verdict;
+  document.getElementById('score-verdict').style.color = c;
 
-  // Render signals — each has { type, label, detail, snippet }
-  const signalsList = document.getElementById('signals-list');
-  signalsList.innerHTML = result.signals.map(s => `
-    <div class="signal-row">
-      <div class="signal-dot ${s.type}"></div>
-      <div class="signal-text">
-        <span class="signal-label">${s.label || ''}</span>
-        ${s.detail  ? `<span class="signal-detail">${s.detail}</span>` : ''}
-        ${s.snippet ? `<span class="signal-snippet">"${s.snippet}"</span>` : ''}
-      </div>
-    </div>`
-  ).join('');
+  // Text signals
+  document.getElementById('signals-list').innerHTML = renderSignalRows(result.signals);
 
-  // Render content summary (extractive) + credibility assessment
-  const contentSummaryEl = document.getElementById('content-summary');
-  const assessmentEl     = document.getElementById('analysis-summary');
+  // Image signals — only shown when image analysis was enabled and returned results
+  const imgCard = document.getElementById('image-analysis-card');
+  if (result.imageSignals && result.imageSignals.length > 0) {
+    document.getElementById('image-signals-list').innerHTML = renderSignalRows(result.imageSignals);
+    imgCard.style.display = '';
+  } else {
+    imgCard.style.display = 'none';
+  }
 
-  contentSummaryEl.textContent = result.contentSummary || '';
-  assessmentEl.textContent     = result.summary        || '';
-
-  // Hide the content summary block if the server returned nothing
+  document.getElementById('content-summary').textContent  = result.contentSummary || '';
+  document.getElementById('analysis-summary').textContent = result.summary || '';
   const summaryCard = document.getElementById('summary-card');
   summaryCard.style.display = (result.contentSummary || result.summary) ? '' : 'none';
 
@@ -222,206 +252,320 @@ function finishScan(result, url) {
 
 // ─── Scan Error ───────────────────────────────────────────────
 function showScanError(message) {
-  // Show the results view with an error state instead of scores
-  document.getElementById('score-number').textContent = '—';
-  document.getElementById('score-number').style.color = 'var(--text-dim)';
+  document.getElementById('score-number').textContent  = '—';
+  document.getElementById('score-number').style.color  = 'var(--text-dim)';
   document.getElementById('score-verdict').textContent = 'Error';
   document.getElementById('score-verdict').style.color = 'var(--red)';
-
-  const fill = document.getElementById('score-bar-fill');
-  fill.style.width = '0%';
-
+  document.getElementById('score-bar-fill').style.width = '0%';
   document.getElementById('signals-list').innerHTML = `
     <div class="signal-row">
       <div class="signal-dot bad"></div>
-      <div class="signal-text">${message || 'An unexpected error occurred.'}</div>
+      <div class="signal-text"><span class="signal-label">${message || 'An unexpected error occurred.'}</span></div>
     </div>`;
   document.getElementById('analysis-summary').textContent =
     'Could not complete the analysis. Make sure the server is running and try rescanning.';
-
   showView('results');
 }
+
+// ─── Score Bar ────────────────────────────────────────────────
 function renderScoreBar(score) {
   const fill = document.getElementById('score-bar-fill');
-  // Reset width to 0 first so the CSS transition animates from scratch each scan
   fill.style.transition = 'none';
   fill.style.width = '0%';
-  // Paint the full red→amber→green gradient; element width does the clipping
   fill.style.background = 'linear-gradient(90deg, #ff4d6d 0%, #ffb020 45%, #00f5a0 100%)';
-  // Force reflow so the transition fires on the next frame
   fill.getBoundingClientRect();
   fill.style.transition = 'width 0.9s cubic-bezier(0.22, 1, 0.36, 1)';
   fill.style.width = score + '%';
 }
 
+// ─── History Detail View ──────────────────────────────────────
+function showHistoryDetail(scan) {
+  // Derive domain for the sub-header
+  let domain = scan.url;
+  try { domain = new URL(scan.url).hostname; } catch {}
+  document.getElementById('hist-detail-domain').textContent = domain;
+
+  // Score bar
+  const colorMap = { green: 'var(--green)', amber: 'var(--amber)', red: 'var(--red)' };
+  const c = colorMap[scan.color] || 'var(--text-mid)';
+
+  const hdFill = document.getElementById('hd-score-bar-fill');
+  hdFill.style.transition = 'none';
+  hdFill.style.width = '0%';
+  hdFill.style.background = 'linear-gradient(90deg, #ff4d6d 0%, #ffb020 45%, #00f5a0 100%)';
+  hdFill.getBoundingClientRect();
+  hdFill.style.transition = 'width 0.9s cubic-bezier(0.22, 1, 0.36, 1)';
+  hdFill.style.width = scan.score + '%';
+
+  // Score number + verdict
+  const numEl     = document.getElementById('hd-score-number');
+  const verdictEl = document.getElementById('hd-score-verdict');
+  numEl.textContent     = scan.score + '%';
+  numEl.style.color     = c;
+  verdictEl.textContent = scan.verdict;
+  verdictEl.style.color = c;
+
+  // Source URL link
+  const urlLink = document.getElementById('hd-url-link');
+  urlLink.href          = scan.url;
+  urlLink.textContent   = scan.url;
+  urlLink.title         = scan.url;
+
+  // Signals — use shared renderer
+  const signals = scan.signals || [];
+  document.getElementById('hd-signals-list').innerHTML = signals.length
+    ? renderSignalRows(signals)
+    : '<div class="nav-caption" style="padding:8px 0;">No signal data stored.</div>';
+
+  // Summaries
+  const contentSum  = scan.content_summary || '';
+  const assessment  = scan.summary         || '';
+  document.getElementById('hd-content-summary').textContent  = contentSum;
+  document.getElementById('hd-analysis-summary').textContent = assessment;
+  document.getElementById('hd-summary-card').style.display   =
+    (contentSum || assessment) ? '' : 'none';
+
+  showView('historydetail');
+
+  // Scroll the detail view back to top
+  const detailView = document.getElementById('view-history-detail');
+  const inner = detailView.querySelector('.view-inner');
+  if (inner) inner.scrollTop = 0;
+}
+
 // ─── Dashboard Population ─────────────────────────────────────
-function populateDashboard() {
-  if (!state.lastScan) return;
+async function populateDashboard() {
+  const histList = document.getElementById('history-list');
+  histList.innerHTML = `<div class="nav-caption" style="padding:16px 0;">Loading history…</div>`;
 
-  const s = state.lastScan;
-  const colorClass = s.color;
+  if (state.lastScan) {
+    const s = state.lastScan;
+    document.getElementById('dash-last-url').innerHTML =
+      `<a href="${s.url}" target="_blank" class="url-link">${s.url}</a>`;
+    document.getElementById('dash-timestamp').textContent = s.time;
+    const pill = document.getElementById('dash-score-pill');
+    pill.textContent  = `⚡ ${s.score}% — ${s.verdict}`;
+    pill.className    = `score-pill ${s.color}`;
+    document.getElementById('dash-summary').textContent = s.summary || '';
+  }
 
-  document.getElementById('dash-last-url').textContent = s.url;
-  document.getElementById('dash-timestamp').textContent = s.time;
+  try {
+    const { status, data } = await apiGet('/history');
+    if (status !== 200) throw new Error(data.error || 'Failed to load history.');
 
-  const pill = document.getElementById('dash-score-pill');
-  pill.textContent = `⚡ ${s.score}% — ${s.verdict}`;
-  pill.className = `score-pill ${colorClass}`;
+    const scans = data.scans || [];
+    if (scans.length === 0) {
+      histList.innerHTML = `<div class="nav-caption" style="padding:16px 0;">No scans yet.</div>`;
+      return;
+    }
 
-  document.getElementById('dash-summary').textContent = s.summary;
+    // Render list items — store full scan data on each element via data attribute
+    histList.innerHTML = scans.map((scan, i) => {
+      const d      = new Date(scan.scanned_at);
+      const when   = isNaN(d) ? '—' : d.toLocaleDateString(undefined,
+        { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const domain = (() => { try { return new URL(scan.url).hostname; } catch { return scan.url; } })();
+      return `
+        <div class="history-item" data-scan-index="${i}" style="cursor:pointer;">
+          <div class="hist-score ${scan.color}">${scan.score}%</div>
+          <div class="hist-info">
+            <strong title="${scan.url}">${domain}</strong>
+            <span>${when} — ${scan.verdict}</span>
+          </div>
+          <span class="hist-arrow">›</span>
+        </div>`;
+    }).join('');
+
+    // Attach click listener to each item — opens history detail view
+    histList.querySelectorAll('.history-item').forEach((el, i) => {
+      el.addEventListener('click', () => showHistoryDetail(scans[i]));
+    });
+
+  } catch (err) {
+    histList.innerHTML = `<div class="nav-caption" style="padding:16px 0;color:var(--red);">Could not load history.</div>`;
+  }
 }
 
 // ─── Event Listeners ──────────────────────────────────────────
 
-// --- Logged-out → Login / Signup
 document.getElementById('go-login').addEventListener('click', () => showView('login'));
 document.getElementById('go-signup').addEventListener('click', () => showView('signup'));
 
-// --- Login form
-document.getElementById('login-submit').addEventListener('click', () => {
+document.getElementById('login-submit').addEventListener('click', async () => {
   hideError('login-error');
   const email = document.getElementById('login-email').value.trim();
   const pass  = document.getElementById('login-password').value;
-
-  if (!email || !pass) {
-    showError('login-error', 'Please fill in all fields.');
-    return;
-  }
-  if (!email.includes('@')) {
-    showError('login-error', 'Please enter a valid email.');
-    return;
-  }
-  if (pass.length < 4) {
-    showError('login-error', 'Password too short.');
-    return;
-  }
-
-  // Simulate login — derive name from email
-  const namePart = email.split('@')[0].replace(/[._]/g, ' ');
-  const displayName = namePart.split(' ')
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
-
-  doLogin(displayName, email);
-  showView('loggedin');
+  if (!email || !pass) { showError('login-error', 'Please fill in all fields.'); return; }
+  if (!email.includes('@')) { showError('login-error', 'Please enter a valid email.'); return; }
+  if (pass.length < 8) { showError('login-error', 'Password must be at least 8 characters.'); return; }
+  const btn = document.getElementById('login-submit');
+  btn.textContent = 'Logging in…'; btn.disabled = true;
+  try {
+    const { status, data } = await apiPost('/login', { email, password: pass });
+    if (status !== 200) {
+      showError('login-error', data.errors?.general || data.errors?.email || 'Invalid email or password.');
+      return;
+    }
+    doLoginSuccess(data.user, data.token);
+    showView('loggedin');
+  } catch { showError('login-error', 'Server unreachable. Is the server running?'); }
+  finally { btn.textContent = 'Log In'; btn.disabled = false; }
 });
 
-// --- Signup form
-document.getElementById('signup-submit').addEventListener('click', () => {
+document.getElementById('signup-submit').addEventListener('click', async () => {
   hideError('signup-error');
   const name    = document.getElementById('signup-name').value.trim();
   const email   = document.getElementById('signup-email').value.trim();
   const pass    = document.getElementById('signup-password').value;
   const confirm = document.getElementById('signup-confirm').value;
-
-  if (!name || !email || !pass || !confirm) {
-    showError('signup-error', 'Please fill in all fields.');
-    return;
-  }
-  if (!email.includes('@')) {
-    showError('signup-error', 'Please enter a valid email.');
-    return;
-  }
-  if (pass.length < 8) {
-    showError('signup-error', 'Password must be at least 8 characters.');
-    return;
-  }
-  if (pass !== confirm) {
-    showError('signup-error', 'Passwords do not match.');
-    return;
-  }
-
-  doLogin(name, email);
-  showView('loggedin');
+  if (!name || !email || !pass || !confirm) { showError('signup-error', 'Please fill in all fields.'); return; }
+  if (!email.includes('@'))  { showError('signup-error', 'Please enter a valid email.'); return; }
+  if (pass.length < 8)       { showError('signup-error', 'Password must be at least 8 characters.'); return; }
+  if (!/[A-Z]/.test(pass))   { showError('signup-error', 'Password needs at least one uppercase letter.'); return; }
+  if (!/[0-9]/.test(pass))   { showError('signup-error', 'Password needs at least one number.'); return; }
+  if (pass !== confirm)      { showError('signup-error', 'Passwords do not match.'); return; }
+  const btn = document.getElementById('signup-submit');
+  btn.textContent = 'Creating account…'; btn.disabled = true;
+  try {
+    const { status, data } = await apiPost('/register', { name, email, password: pass, confirm_password: confirm });
+    if (status !== 201) {
+      const errs = data.errors || {};
+      showError('signup-error', errs.email || errs.name || errs.password || errs.general || 'Registration failed.');
+      return;
+    }
+    doLoginSuccess(data.user, data.token);
+    showView('loggedin');
+  } catch { showError('signup-error', 'Server unreachable. Is the server running?'); }
+  finally { btn.textContent = 'Create Account'; btn.disabled = false; }
 });
 
-// --- Cross-links between login and signup
-document.getElementById('switch-to-signup').addEventListener('click', () => {
-  hideError('login-error');
-  showView('signup');
-});
-document.getElementById('switch-to-login').addEventListener('click', () => {
-  hideError('signup-error');
-  showView('login');
-});
-
-// --- Back buttons
-document.getElementById('back-from-login').addEventListener('click', () => showView('loggedout'));
+document.getElementById('switch-to-signup').addEventListener('click', () => { hideError('login-error');  showView('signup'); });
+document.getElementById('switch-to-login').addEventListener('click',  () => { hideError('signup-error'); showView('login');  });
+document.getElementById('back-from-login').addEventListener('click',  () => showView('loggedout'));
 document.getElementById('back-from-signup').addEventListener('click', () => showView('loggedout'));
 
-// --- Analyse buttons (logged out & logged in)
-document.getElementById('analyse-btn-lo').addEventListener('click', () => {
-  // Allow scan without login — results will just lack save/dashboard features
-  runScan();
-});
+document.getElementById('analyse-btn-lo').addEventListener('click', () => runScan());
+document.getElementById('analyse-btn-li').addEventListener('click', () => runScan());
 
-document.getElementById('analyse-btn-li').addEventListener('click', () => {
-  runScan();
-});
-
-// --- Logout buttons
-document.getElementById('logout-btn').addEventListener('click', doLogout);
-document.getElementById('footer-logout').addEventListener('click', doLogout);
+document.getElementById('logout-btn').addEventListener('click',       doLogout);
+document.getElementById('footer-logout').addEventListener('click',    doLogout);
 document.getElementById('logout-from-dash').addEventListener('click', doLogout);
 
-// --- Dashboard button (from logged-in view)
-document.getElementById('go-dashboard').addEventListener('click', () => {
-  populateDashboard();
-  showView('dashboard');
+document.getElementById('go-dashboard').addEventListener('click', async () => {
+  showView('dashboard'); await populateDashboard();
+});
+document.getElementById('dash-close').addEventListener('click', () => showView('loggedin'));
+document.getElementById('hist-detail-back').addEventListener('click', () => showView('dashboard'));
+document.getElementById('footer-go-dashboard').addEventListener('click', async () => {
+  if (!state.isLoggedIn) { showView('loggedout'); return; }
+  showView('dashboard'); await populateDashboard();
+});
+document.getElementById('footer-rescan').addEventListener('click', () => runScan());
+
+// ─── Image Analysis Toggle ─────────────────────────────────────
+const imgToggle = document.getElementById('img-analysis-toggle');
+const imgToggleLabel = document.getElementById('img-toggle-label');
+const uploadZone = document.getElementById('upload-zone');
+
+imgToggle.addEventListener('change', () => {
+  const enabled = imgToggle.checked;
+  state.imageAnalysisEnabled = enabled;
+  imgToggleLabel.textContent = enabled ? 'On' : 'Off';
+  uploadZone.classList.toggle('disabled', !enabled);
 });
 
-// --- Dashboard close
-document.getElementById('dash-close').addEventListener('click', () => {
-  showView('loggedin');
-});
-
-// --- Results footer: go to dashboard
-document.getElementById('footer-go-dashboard').addEventListener('click', () => {
-  if (!state.isLoggedIn) {
-    showView('loggedout');
-    return;
-  }
-  populateDashboard();
-  showView('dashboard');
-});
-
-// --- Results footer: rescan
-document.getElementById('footer-rescan').addEventListener('click', () => {
-  runScan();
-});
-
-// --- Media upload zone
-document.getElementById('upload-zone').addEventListener('click', () => {
+// ─── Dashboard Image Upload ────────────────────────────────────
+uploadZone.addEventListener('click', () => {
+  if (!state.imageAnalysisEnabled) return;
   document.getElementById('media-upload').click();
 });
 
-document.getElementById('media-upload').addEventListener('change', (e) => {
+document.getElementById('media-upload').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  const zone = document.getElementById('upload-zone');
-  zone.innerHTML = `
+
+  // Reset result card
+  const resultCard = document.getElementById('media-result');
+  resultCard.classList.remove('visible');
+
+  // Show loading state in the upload zone
+  uploadZone.innerHTML = `
     <div class="upload-icon">⏳</div>
-    <p>Analysing: ${file.name}</p>
+    <p>Analysing ${file.name}…</p>
     <small>${(file.size / 1024 / 1024).toFixed(2)} MB</small>
   `;
-  setTimeout(() => {
-    zone.innerHTML = `
-      <div class="upload-icon">✅</div>
-      <p style="color:var(--green);">No AI generation detected</p>
-      <small>${file.name}</small>
+
+  try {
+    // Build a local preview URL
+    const previewURL = URL.createObjectURL(file);
+
+    // Send the file to /analyse-image as multipart form data
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch(`${API}/analyse-image`, {
+      method:  'POST',
+      headers: { 'Authorization': `Bearer ${state.token}` },
+      body:    formData,
+    });
+    const data = await res.json();
+
+    if (data.error) throw new Error(data.error);
+
+    const pct      = Math.round(data.ai_prob * 100);
+    const isAi     = data.is_ai;
+    const barColor = isAi
+      ? '#ff4d6d'
+      : pct >= 40 ? '#ffb020' : '#00f5a0';
+
+    // Restore upload zone
+    uploadZone.innerHTML = `
+      <div class="upload-icon">🖼</div>
+      <p>Drop image here or click to browse</p>
+      <small>JPG, PNG, WEBP · Max 10MB</small>
+      <input type="file" id="media-upload" accept="image/jpeg,image/png,image/webp" style="display:none;">
     `;
-  }, 2500);
+    // Re-attach listener since innerHTML replaced the input
+    document.getElementById('media-upload').addEventListener('change', () => {});
+
+    // Populate result card
+    document.getElementById('media-result-img').src      = previewURL;
+    document.getElementById('media-result-title').textContent = isAi
+      ? '⚠ Likely AI-Generated'
+      : '✓ Likely Authentic';
+    document.getElementById('media-result-title').style.color = barColor;
+    document.getElementById('media-result-pct').textContent   = `${pct}%`;
+    document.getElementById('media-result-verdict').textContent = data.verdict;
+
+    const bar = document.getElementById('media-result-bar');
+    bar.style.width      = '0%';
+    bar.style.background = barColor;
+    // Animate on next frame
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => { bar.style.width = pct + '%'; });
+    });
+
+    resultCard.classList.add('visible');
+
+  } catch (err) {
+    uploadZone.innerHTML = `
+      <div class="upload-icon">❌</div>
+      <p style="color:var(--red);">${err.message || 'Analysis failed.'}</p>
+      <small>Check server connection and try again.</small>
+      <input type="file" id="media-upload" accept="image/jpeg,image/png,image/webp" style="display:none;">
+    `;
+  }
+
+  // Clear the file input so the same file can be re-uploaded
+  e.target.value = '';
 });
 
-// --- Media type chips
-document.getElementById('chip-image').addEventListener('click', () => {
-  document.getElementById('chip-image').classList.toggle('active');
-  document.getElementById('chip-video').classList.remove('active');
+// ─── Init — restore session from storage ──────────────────────
+chrome.storage.local.get(['factguard_token', 'factguard_user'], (stored) => {
+  if (stored.factguard_token && stored.factguard_user) {
+    doLoginSuccess(stored.factguard_user, stored.factguard_token);
+    showView('loggedin');
+  } else {
+    showView('loggedout');
+  }
 });
-document.getElementById('chip-video').addEventListener('click', () => {
-  document.getElementById('chip-video').classList.toggle('active');
-  document.getElementById('chip-image').classList.remove('active');
-});
-
-// ─── Init ─────────────────────────────────────────────────────
-showView('loggedout');

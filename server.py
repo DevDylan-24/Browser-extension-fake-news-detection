@@ -1,12 +1,26 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import pickle
 import re
+import jwt
+import requests as http_requests
+from datetime import datetime, timezone, timedelta
 from urllib.request import urlopen, Request
 from urllib.parse import quote_plus
 from urllib.error import URLError
 import json
 
+# ── Project modules ───────────────────────────────────────────────────────────
+from config import (
+    SECRET_KEY, TOKEN_EXPIRY_SECONDS,
+    SIGHTENGINE_API_USER, SIGHTENGINE_API_SECRET, SIGHTENGINE_URL,
+    MAX_IMAGES_PER_SCAN,
+)
+from models.user import User
+from models.history import HistoryManager
+
 app = Flask(__name__)
+CORS(app)
 model = pickle.load(open("models/NLP_large_model.pkl", "rb"))
 
 
@@ -667,35 +681,341 @@ def build_assessment(credibility, emotion_score, fact_score, formality, verified
 
 
 # ─────────────────────────────────────────────────────────────
-# ROUTE
+# IMAGE ANALYSIS  (SightEngine genai model)
+# ─────────────────────────────────────────────────────────────
+
+def _se_params():
+    """Base SightEngine auth params."""
+    return {
+        "models":     "genai",
+        "api_user":   SIGHTENGINE_API_USER,
+        "api_secret": SIGHTENGINE_API_SECRET,
+    }
+
+
+def analyse_image_url(url: str) -> dict:
+    """
+    Check a single image URL for AI generation via SightEngine.
+
+    Returns
+    ───────
+    {
+        "url":          str,
+        "ai_prob":      float,   # 0.0 – 1.0
+        "is_ai":        bool,    # True if ai_prob >= 0.7
+        "verdict":      str,     # human-readable verdict
+        "error":        str,     # non-empty if the call failed
+    }
+    """
+    try:
+        params = {**_se_params(), "url": url}
+        r = http_requests.get(SIGHTENGINE_URL, params=params, timeout=8)
+        data = r.json()
+
+        if data.get("status") != "success":
+            return {"url": url, "ai_prob": 0.0, "is_ai": False,
+                    "verdict": "", "error": data.get("error", {}).get("message", "API error")}
+
+        ai_prob = float(data.get("type", {}).get("ai_generated", 0.0))
+        is_ai   = ai_prob >= 0.70
+        verdict = _ai_verdict(ai_prob)
+        return {"url": url, "ai_prob": ai_prob, "is_ai": is_ai, "verdict": verdict, "error": ""}
+
+    except Exception as e:
+        return {"url": url, "ai_prob": 0.0, "is_ai": False, "verdict": "", "error": str(e)}
+
+
+def analyse_image_upload(file_bytes: bytes, filename: str) -> dict:
+    """
+    Check an uploaded image file for AI generation via SightEngine.
+
+    Returns the same dict shape as analyse_image_url.
+    """
+    try:
+        params = _se_params()
+        files  = {"media": (filename, file_bytes)}
+        r = http_requests.post(SIGHTENGINE_URL, data=params, files=files, timeout=12)
+        data = r.json()
+
+        if data.get("status") != "success":
+            return {"url": "", "ai_prob": 0.0, "is_ai": False,
+                    "verdict": "", "error": data.get("error", {}).get("message", "API error")}
+
+        ai_prob = float(data.get("type", {}).get("ai_generated", 0.0))
+        is_ai   = ai_prob >= 0.70
+        verdict = _ai_verdict(ai_prob)
+        return {"url": "", "ai_prob": round(ai_prob, 4), "is_ai": is_ai,
+                "verdict": verdict, "error": ""}
+
+    except Exception as e:
+        return {"url": "", "ai_prob": 0.0, "is_ai": False, "verdict": "", "error": str(e)}
+
+
+def _ai_verdict(prob: float) -> str:
+    if prob >= 0.90:
+        return "Almost certainly AI-generated."
+    if prob >= 0.70:
+        return "Likely AI-generated."
+    if prob >= 0.40:
+        return "Possibly AI-generated — inconclusive."
+    if prob >= 0.15:
+        return "Unlikely to be AI-generated."
+    return "Most likely authentic."
+
+
+def _filter_article_images(urls: list[str]) -> list[str]:
+    """
+    Filter the raw image list from content.js to remove:
+    - Data URIs
+    - Tracker pixels / tiny images (common placeholder patterns)
+    - SVG icons
+    - Images from known placeholder/UI domains
+    Only return absolute HTTP(S) URLs that look like real article images.
+    """
+    skip_patterns = [
+        r'placeholder', r'icon', r'logo', r'avatar', r'spinner',
+        r'tracking', r'pixel', r'1x1', r'blank', r'spacer', r'grey',
+        r'gray', r'transparent', r'\.svg', r'data:',
+    ]
+    skip_re = re.compile('|'.join(skip_patterns), re.IGNORECASE)
+
+    filtered = []
+    for url in urls:
+        if not url.startswith(('http://', 'https://')):
+            continue
+        if skip_re.search(url):
+            continue
+        filtered.append(url)
+    return filtered
+
+
+def analyse_article_images(raw_urls: list[str], max_images: int = MAX_IMAGES_PER_SCAN) -> list[dict]:
+    """
+    Filter article images, pick up to max_images, run SightEngine on each,
+    and return a list of result dicts.
+    """
+    candidates = _filter_article_images(raw_urls)[:max_images]
+    return [analyse_image_url(url) for url in candidates]
+
+
+def build_image_signals(image_results: list[dict]) -> list[dict]:
+    """
+    Convert SightEngine results into signal dicts that match the text signal format,
+    ready to be appended to the signals list and rendered by the extension.
+    """
+    signals = []
+    for res in image_results:
+        if res.get("error"):
+            signals.append({
+                "type":    "warn",
+                "label":   "Image Analysis Unavailable",
+                "detail":  f"Could not analyse image: {res['error']}",
+                "snippet": _short_url(res["url"]),
+            })
+            continue
+
+        prob    = res["ai_prob"]
+        pct     = round(prob * 100)
+        is_ai   = res["is_ai"]
+        sig_type = "bad" if is_ai else ("warn" if prob >= 0.40 else "ok")
+
+        signals.append({
+            "type":    sig_type,
+            "label":   f"Image: {res['verdict']}",
+            "detail":  f"AI-generated probability: {pct}%. {res['verdict']}",
+            "snippet": _short_url(res["url"]),
+        })
+    return signals
+
+
+def _short_url(url: str, max_len: int = 80) -> str:
+    if not url:
+        return ""
+    return url if len(url) <= max_len else url[:max_len - 1] + "…"
+
+
+def _adjust_score_for_images(credibility: float, image_results: list[dict]) -> float:
+    """
+    Nudge the credibility score based on image analysis:
+    - Each likely-AI image  (prob >= 0.70) reduces credibility by up to 0.08
+    - Each possibly-AI image (prob >= 0.40) reduces credibility by up to 0.04
+    Capped so the adjustment never exceeds 0.15 total.
+    """
+    if not image_results:
+        return credibility
+
+    adjustment = 0.0
+    for res in image_results:
+        if res.get("error"):
+            continue
+        prob = res.get("ai_prob", 0.0)
+        if prob >= 0.70:
+            adjustment += 0.08
+        elif prob >= 0.40:
+            adjustment += 0.04
+
+    adjustment = min(adjustment, 0.15)
+    return max(0.0, credibility - adjustment)
+
+
+# ─────────────────────────────────────────────────────────────
+# JWT HELPERS
+# ─────────────────────────────────────────────────────────────
+
+def _create_token(user_id: str) -> str:
+    """Create a signed JWT containing the user_id."""
+    payload = {
+        "user_id": user_id,
+        "exp":     datetime.now(timezone.utc) + timedelta(seconds=TOKEN_EXPIRY_SECONDS),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+
+
+def _decode_token(token: str) -> dict | None:
+    """
+    Decode and verify a JWT.
+    Returns the payload dict on success, or None if invalid / expired.
+    """
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+    except jwt.PyJWTError:
+        return None
+
+
+def _get_user_id_from_request() -> str | None:
+    """
+    Extract the Bearer token from the Authorization header and decode it.
+    Returns the user_id string, or None if missing / invalid.
+    """
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    token   = auth[len("Bearer "):]
+    payload = _decode_token(token)
+    return payload.get("user_id") if payload else None
+
+
+# ─────────────────────────────────────────────────────────────
+# ROUTE: REGISTER
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/register", methods=["POST"])
+def register():
+    """
+    POST /register
+    Body: { name, email, password, confirm_password }
+    Returns: { token, user } on success, or { errors } on failure.
+    """
+    data = request.json or {}
+    user, errors = User.register(
+        name             = data.get("name", ""),
+        email            = data.get("email", ""),
+        password         = data.get("password", ""),
+        confirm_password = data.get("confirm_password", ""),
+    )
+    if errors:
+        return jsonify({"errors": errors}), 400
+
+    token = _create_token(user._id)
+    return jsonify({"token": token, "user": user.to_public_dict()}), 201
+
+
+# ─────────────────────────────────────────────────────────────
+# ROUTE: LOGIN
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/login", methods=["POST"])
+def login():
+    """
+    POST /login
+    Body: { email, password }
+    Returns: { token, user } on success, or { errors } on failure.
+    """
+    data = request.json or {}
+    user, errors = User.login(
+        email    = data.get("email", ""),
+        password = data.get("password", ""),
+    )
+    if errors:
+        return jsonify({"errors": errors}), 401
+
+    token = _create_token(user._id)
+    return jsonify({"token": token, "user": user.to_public_dict()}), 200
+
+
+# ─────────────────────────────────────────────────────────────
+# ROUTE: PREDICT  (text analysis — saves to history if logged in)
 # ─────────────────────────────────────────────────────────────
 
 @app.route("/predict", methods=["POST"])
 def predict():
+    """
+    POST /predict
+    Headers: Authorization: Bearer <token>  (optional)
+    Body:    {
+               text:            str,
+               url:             str,
+               images:          list[str],   # raw image URLs from content.js
+               analyse_images:  bool         # true = run SightEngine on article images
+             }
+    """
     try:
-        data = request.json
-        text = data["text"]
+        data            = request.json or {}
+        text            = data.get("text", "")
+        url             = data.get("url", "")
+        raw_images      = data.get("images", [])
+        analyse_images  = bool(data.get("analyse_images", False))
 
+        if not text:
+            return jsonify({"error": "No text provided."}), 400
+
+        # ── Model prediction ──────────────────────────────────────────────────
         prediction       = model.predict([text])[0]
         probability_fake = float(model.predict_proba([text])[0][0])
         credibility      = 1.0 - probability_fake
 
+        # ── Text analysis ─────────────────────────────────────────────────────
         emotion_score, emotion_words, clickbait_count = emotional_language_score(text)
-        fact_score   = factual_consistency_score(text)
-        formality    = formality_score(text)
-        claims       = extract_claims(text, max_claims=3)
-        verification = verify_claims_online(claims)
+        fact_score    = factual_consistency_score(text)
+        formality     = formality_score(text)
+        claims        = extract_claims(text, max_claims=3)
+        verification  = verify_claims_online(claims)
         verified_count = sum(1 for v in verification if v["found"])
 
-        signals         = build_signals(text, probability_fake, credibility)
+        # ── Image analysis (optional) ─────────────────────────────────────────
+        image_results  = []
+        image_signals  = []
+        if analyse_images and raw_images:
+            image_results = analyse_article_images(raw_images, MAX_IMAGES_PER_SCAN)
+            image_signals = build_image_signals(image_results)
+            # Adjust credibility score based on AI image detection
+            credibility   = _adjust_score_for_images(credibility, image_results)
+
+        # ── Derive verdict & colour after any image adjustment ────────────────
+        if credibility >= 0.70:
+            verdict, color = "Credible",    "green"
+        elif credibility >= 0.40:
+            verdict, color = "Uncertain",   "amber"
+        else:
+            verdict, color = "Likely Fake", "red"
+
+        score = round(credibility * 100)
+
+        # ── Text signals (calibrated against potentially adjusted credibility) ─
+        text_signals    = build_signals(text, probability_fake, credibility)
         assessment      = build_assessment(credibility, emotion_score, fact_score,
                                            formality, verified_count, len(claims))
         content_summary = build_content_summary(text, max_sentences=3)
 
-        return jsonify({
+        result = {
             "prediction":      int(prediction),
             "probability":     probability_fake,
-            "signals":         signals,
+            "score":           score,
+            "verdict":         verdict,
+            "color":           color,
+            "signals":         text_signals,
+            "image_signals":   image_signals,
+            "image_results":   image_results,
             "summary":         assessment,
             "content_summary": content_summary,
             "verified_claims": verification,
@@ -707,13 +1027,73 @@ def predict():
                 "punct_density":   round(punctuation_density(text), 3),
                 "url_count":       len(extract_urls(text)),
                 "clickbait_hits":  clickbait_count,
+                "images_analysed": len(image_results),
             },
-        })
+        }
+
+        # ── Save to history if authenticated ──────────────────────────────────
+        user_id = _get_user_id_from_request()
+        if user_id:
+            hm = HistoryManager(user_id)
+            hm.save_scan(url, result)
+
+        return jsonify(result), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/analyse-image", methods=["POST"])
+def analyse_image_endpoint():
+    """
+    POST /analyse-image  (multipart/form-data)
+    Headers: Authorization: Bearer <token>  (required)
+    Form:    file = <image file>
+    Returns: { ai_prob, is_ai, verdict, error }
+
+    Used by the dashboard AI Media Detector upload zone.
+    """
+    user_id = _get_user_id_from_request()
+    if not user_id:
+        return jsonify({"error": "Unauthorised. Please log in."}), 401
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided."}), 400
+
+    f = request.files["file"]
+    allowed = {"image/jpeg", "image/png", "image/webp"}
+    if f.mimetype not in allowed:
+        return jsonify({"error": "Unsupported file type. Use JPG, PNG or WEBP."}), 400
+
+    file_bytes = f.read()
+    if len(file_bytes) > 10 * 1024 * 1024:   # 10 MB limit
+        return jsonify({"error": "File too large. Maximum size is 10 MB."}), 400
+
+    result = analyse_image_upload(file_bytes, f.filename or "upload.jpg")
+    return jsonify(result), 200 if not result.get("error") else 500
+
+
+# ─────────────────────────────────────────────────────────────
+# ROUTE: HISTORY
+# ─────────────────────────────────────────────────────────────
+
+@app.route("/history", methods=["GET"])
+def history():
+    """
+    GET /history
+    Headers: Authorization: Bearer <token>  (required)
+    Returns: { scans: [ ...5 most recent scan objects... ] }
+    """
+    user_id = _get_user_id_from_request()
+    if not user_id:
+        return jsonify({"error": "Unauthorised. Please log in."}), 401
+
+    hm    = HistoryManager(user_id)
+    scans = hm.get_recent(limit=5)
+    return jsonify({"scans": scans}), 200
+
+
 if __name__ == "__main__":
     print("Server is running on http://localhost:5000")
-    app.run(port=5000)
+    app.run(port=5000, debug=True)
+
