@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FactGuard AI</title>
   <link rel="stylesheet" href="popup.css">
+  <!-- Ionicons -->
+  <!-- <script type="module" src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.esm.js"></script>
+  <script nomodule src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.js"></script> -->
 </head>
 <body>
 
@@ -12,7 +15,9 @@
 
     <!-- SHARED HEADER -->
     <div class="sidebar-header" id="main-header">
-      <div class="logo-icon">🔍</div>
+      <div class="logo-icon">
+        🌐
+      </div>
       <div>
         <div class="logo-text">FactGuard AI</div>
         <div class="logo-sub" id="header-sub">Fake News Detector</div>
@@ -27,7 +32,9 @@
         <div class="view-inner">
 
           <button class="analyse-btn" id="analyse-btn-lo">
-            <div class="analyse-icon">⚡</div>
+            <div class="analyse-icon">
+              🔍
+            </div>
             <div class="analyse-text">
               <strong>Analyse This Page</strong>
               <span>Check credibility score</span>
@@ -45,12 +52,16 @@
           </div>
 
           <div class="dashboard-btn locked">
-            <div class="dash-icon">📊</div>
+            <div class="dash-icon">
+              📊
+            </div>
             <div class="dash-text">
               <strong>Dashboard</strong>
               <span>History &amp; media check</span>
             </div>
-            <div class="lock-badge">🔒</div>
+            <div class="lock-badge">
+              🔒
+            </div>
           </div>
 
           <div class="nav-caption">Sign in to unlock all features</div>
@@ -62,7 +73,9 @@
         <div class="view-inner">
 
           <div class="auth-card-header">
-            <div class="auth-icon">🔐</div>
+            <div class="auth-icon">
+              🔐
+            </div>
             <h2 class="auth-title">Welcome Back</h2>
             <p class="auth-subtitle">Sign in to your FactGuard account</p>
           </div>
@@ -97,7 +110,9 @@
         <div class="view-inner">
 
           <div class="auth-card-header">
-            <div class="auth-icon">✨</div>
+            <div class="auth-icon">
+              
+            </div>
             <h2 class="auth-title">Create Account</h2>
             <p class="auth-subtitle">Join FactGuard to track your analyses</p>
           </div>
@@ -151,7 +166,9 @@
           </div>
 
           <button class="analyse-btn" id="analyse-btn-li">
-            <div class="analyse-icon">⚡</div>
+            <div class="analyse-icon">
+              🔍
+            </div>
             <div class="analyse-text">
               <strong>Analyse This Page</strong>
               <span>Check credibility score</span>
@@ -161,12 +178,16 @@
           <div class="divider"><hr><span>Navigation</span><hr></div>
 
           <div class="dashboard-btn unlocked" id="go-dashboard">
-            <div class="dash-icon">📊</div>
+            <div class="dash-icon">
+              📊
+            </div>
             <div class="dash-text">
               <strong>Dashboard</strong>
               <span>History &amp; media check</span>
             </div>
-            <div class="lock-badge accent">→</div>
+            <div class="lock-badge accent">
+             →
+            </div>
           </div>
 
           <div class="nav-caption">Click Analyse to scan this page</div>
@@ -179,7 +200,9 @@
           <div class="scan-animation">
             <div class="scan-ring r1"></div>
             <div class="scan-ring r2"></div>
-            <div class="scan-core">🔍</div>
+            <div class="scan-core">
+              🔍
+            </div>
           </div>
           <div class="scan-title">Analysing Page...</div>
           <div class="scan-sub">Checking sources, language &amp; credibility signals</div>
@@ -238,12 +261,16 @@
       <div id="view-dashboard" class="view">
 
         <div class="dash-header">
-          <div class="logo-icon small">📊</div>
+          <div class="logo-icon small">
+            📊
+          </div>
           <div>
             <div class="logo-text">Dashboard</div>
             <div class="logo-sub">Your Analysis Hub</div>
           </div>
-          <button class="dash-close" id="dash-close">✕</button>
+          <button class="dash-close" id="dash-close">
+            ✖
+          </button>
         </div>
 
         <div class="view-inner" style="padding-bottom:16px;">
@@ -316,7 +343,7 @@
             <p>Upload an image to detect if it was AI-generated. Toggle on to enable (uses API credits).</p>
 
             <div class="upload-zone disabled" id="upload-zone">
-              <div class="upload-icon">🖼</div>
+              🚀
               <p>Drop image here or click to browse</p>
               <small>JPG, PNG, WEBP · Max 10MB</small>
               <input type="file" id="media-upload" accept="image/jpeg,image/png,image/webp" style="display:none;">
@@ -336,12 +363,16 @@
                   </div>
                 </div>
                 <div class="media-result-verdict" id="media-result-verdict"></div>
+                <button class="media-refresh-btn" id="media-refresh-btn">
+                  ⟳
+                  Analyse Another Image
+                </button>
               </div>
             </div>
           </div>
 
           <button class="btn btn-outline btn-full" id="logout-from-dash" style="margin-top:4px;">
-            🚪 Log Out
+             Log Out
           </button>
 
         </div>
@@ -351,7 +382,9 @@
       <div id="view-history-detail" class="view">
 
         <div class="dash-header">
-          <button class="dash-back" id="hist-detail-back">← Back</button>
+          <button class="dash-back" id="hist-detail-back">
+             Back
+          </button>
           <div style="flex:1;">
             <div class="logo-text">Scan Details</div>
             <div class="logo-sub" id="hist-detail-domain">—</div>
@@ -360,7 +393,6 @@
 
         <div class="view-inner" style="padding-bottom:16px;">
 
-          <!-- Score section mirroring results view -->
           <div class="score-section">
             <div class="score-label">Credibility Score</div>
             <div class="score-display">
@@ -381,19 +413,16 @@
             </div>
           </div>
 
-          <!-- Source link -->
           <div class="hist-detail-url-card">
             <span class="form-label">Source</span>
             <a id="hd-url-link" href="#" target="_blank" class="url-link hd-url">—</a>
           </div>
 
-          <!-- Signals -->
           <div class="analysis-card">
             <h4>Signals Detected</h4>
             <div id="hd-signals-list"></div>
           </div>
 
-          <!-- Summary -->
           <div class="analysis-card" id="hd-summary-card">
             <h4>Content Summary</h4>
             <div class="content-summary" id="hd-content-summary"></div>
@@ -409,15 +438,15 @@
     <div class="action-footer hidden" id="results-footer">
       <div class="btn-row">
         <button class="btn-sm" id="footer-go-dashboard">
-          <span class="btn-icon">📊</span>
+          
           <span>Dashboard</span>
         </button>
         <button class="btn-sm" id="footer-rescan">
-          <span class="btn-icon">🔄</span>
+          
           <span>Rescan</span>
         </button>
         <button class="btn-sm danger" id="footer-logout">
-          <span class="btn-icon">🚪</span>
+          
           <span>Log Out</span>
         </button>
       </div>

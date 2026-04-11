@@ -971,7 +971,10 @@ def predict():
 
         # ── Model prediction ──────────────────────────────────────────────────
         prediction       = model.predict([text])[0]
-        probability_fake = float(model.predict_proba([text])[0][0])
+        # predict_proba returns [[P(class_0), P(class_1)]]
+        # Class 0 = REAL news, Class 1 = FAKE news
+        # We use index [1] to get the probability of the text being FAKE
+        probability_fake = float(model.predict_proba([text])[0][1])
         credibility      = 1.0 - probability_fake
 
         # ── Text analysis ─────────────────────────────────────────────────────

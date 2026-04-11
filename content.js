@@ -16,7 +16,7 @@
 
 function extractPageContent() {
 
-    // ── Text ─────────────────────────────────────────────────────────────────
+    // Text
 
     let text = "";
 
@@ -46,7 +46,7 @@ function extractPageContent() {
         text = document.body.innerText.trim();
     }
 
-    // ── Images ────────────────────────────────────────────────────────────────
+    // Images 
 
     const images = Array.from(document.querySelectorAll("img"))
         .filter(img => {

@@ -344,7 +344,7 @@ async function populateDashboard() {
       `<a href="${s.url}" target="_blank" class="url-link">${s.url}</a>`;
     document.getElementById('dash-timestamp').textContent = s.time;
     const pill = document.getElementById('dash-score-pill');
-    pill.textContent  = `⚡ ${s.score}% — ${s.verdict}`;
+    pill.textContent  = `${s.score}% — ${s.verdict}`;
     pill.className    = `score-pill ${s.color}`;
     document.getElementById('dash-summary').textContent = s.summary || '';
   }
@@ -359,7 +359,7 @@ async function populateDashboard() {
       return;
     }
 
-    // Render list items — store full scan data on each element via data attribute
+    // Render list items using Ionicon for the arrow
     histList.innerHTML = scans.map((scan, i) => {
       const d      = new Date(scan.scanned_at);
       const when   = isNaN(d) ? '—' : d.toLocaleDateString(undefined,
@@ -372,7 +372,7 @@ async function populateDashboard() {
             <strong title="${scan.url}">${domain}</strong>
             <span>${when} — ${scan.verdict}</span>
           </div>
-          <span class="hist-arrow">›</span>
+          <ion-icon name="chevron-forward-outline" class="hist-arrow"></ion-icon>
         </div>`;
     }).join('');
 
@@ -463,9 +463,31 @@ document.getElementById('footer-go-dashboard').addEventListener('click', async (
 document.getElementById('footer-rescan').addEventListener('click', () => runScan());
 
 // ─── Image Analysis Toggle ─────────────────────────────────────
-const imgToggle = document.getElementById('img-analysis-toggle');
+const imgToggle      = document.getElementById('img-analysis-toggle');
 const imgToggleLabel = document.getElementById('img-toggle-label');
-const uploadZone = document.getElementById('upload-zone');
+const uploadZone     = document.getElementById('upload-zone');
+
+function resetUploadZone() {
+  // Rebuild the upload zone with Ionicons — used after analysis and on refresh
+  uploadZone.innerHTML = `
+    <ion-icon name="image-outline" class="upload-icon-ion"></ion-icon>
+    <p>Drop image here or click to browse</p>
+    <small>JPG, PNG, WEBP · Max 10MB</small>
+    <input type="file" id="media-upload" accept="image/jpeg,image/png,image/webp" style="display:none;">
+  `;
+  // Re-attach the file change listener since innerHTML wiped the old input
+  document.getElementById('media-upload').addEventListener('change', handleMediaUpload);
+}
+
+function resetMediaResult() {
+  const resultCard = document.getElementById('media-result');
+  resultCard.classList.remove('visible');
+  document.getElementById('media-result-img').src       = '';
+  document.getElementById('media-result-bar').style.width = '0%';
+  document.getElementById('media-result-pct').textContent = '—';
+  document.getElementById('media-result-title').textContent = 'Analysis Complete';
+  document.getElementById('media-result-verdict').textContent = '';
+}
 
 imgToggle.addEventListener('change', () => {
   const enabled = imgToggle.checked;
@@ -477,29 +499,27 @@ imgToggle.addEventListener('change', () => {
 // ─── Dashboard Image Upload ────────────────────────────────────
 uploadZone.addEventListener('click', () => {
   if (!state.imageAnalysisEnabled) return;
-  document.getElementById('media-upload').click();
+  const input = document.getElementById('media-upload');
+  if (input) input.click();
 });
 
-document.getElementById('media-upload').addEventListener('change', async (e) => {
+async function handleMediaUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
 
-  // Reset result card
-  const resultCard = document.getElementById('media-result');
-  resultCard.classList.remove('visible');
+  // Hide any previous result
+  resetMediaResult();
 
-  // Show loading state in the upload zone
+  // Show loading state inside the upload zone
   uploadZone.innerHTML = `
-    <div class="upload-icon">⏳</div>
-    <p>Analysing ${file.name}…</p>
+    <ion-icon name="hourglass-outline" class="upload-icon-ion" style="color:var(--accent);"></ion-icon>
+    <p>Analysing <strong>${file.name}</strong>…</p>
     <small>${(file.size / 1024 / 1024).toFixed(2)} MB</small>
   `;
 
   try {
-    // Build a local preview URL
     const previewURL = URL.createObjectURL(file);
 
-    // Send the file to /analyse-image as multipart form data
     const formData = new FormData();
     formData.append('file', file);
 
@@ -514,50 +534,55 @@ document.getElementById('media-upload').addEventListener('change', async (e) => 
 
     const pct      = Math.round(data.ai_prob * 100);
     const isAi     = data.is_ai;
-    const barColor = isAi
-      ? '#ff4d6d'
-      : pct >= 40 ? '#ffb020' : '#00f5a0';
+    const barColor = isAi ? '#ff4d6d' : pct >= 40 ? '#ffb020' : '#00f5a0';
+    const titleIcon = isAi ? 'warning-outline' : 'checkmark-circle-outline';
+    const titleText = isAi ? 'Likely AI-Generated' : 'Likely Authentic';
 
-    // Restore upload zone
-    uploadZone.innerHTML = `
-      <div class="upload-icon">🖼</div>
-      <p>Drop image here or click to browse</p>
-      <small>JPG, PNG, WEBP · Max 10MB</small>
-      <input type="file" id="media-upload" accept="image/jpeg,image/png,image/webp" style="display:none;">
-    `;
-    // Re-attach listener since innerHTML replaced the input
-    document.getElementById('media-upload').addEventListener('change', () => {});
+    // Restore upload zone to default state
+    resetUploadZone();
 
     // Populate result card
-    document.getElementById('media-result-img').src      = previewURL;
-    document.getElementById('media-result-title').textContent = isAi
-      ? '⚠ Likely AI-Generated'
-      : '✓ Likely Authentic';
-    document.getElementById('media-result-title').style.color = barColor;
-    document.getElementById('media-result-pct').textContent   = `${pct}%`;
+    const resultCard = document.getElementById('media-result');
+    document.getElementById('media-result-img').src = previewURL;
+
+    const titleEl = document.getElementById('media-result-title');
+    titleEl.innerHTML = `<ion-icon name="${titleIcon}" style="vertical-align:middle;margin-right:5px;font-size:15px;"></ion-icon>${titleText}`;
+    titleEl.style.color = barColor;
+
+    document.getElementById('media-result-pct').textContent     = `${pct}%`;
     document.getElementById('media-result-verdict').textContent = data.verdict;
 
     const bar = document.getElementById('media-result-bar');
+    bar.style.transition = 'none';
     bar.style.width      = '0%';
     bar.style.background = barColor;
-    // Animate on next frame
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => { bar.style.width = pct + '%'; });
-    });
+    bar.getBoundingClientRect();
+    bar.style.transition = 'width 0.9s cubic-bezier(0.22, 1, 0.36, 1)';
+    bar.style.width      = pct + '%';
 
     resultCard.classList.add('visible');
 
   } catch (err) {
     uploadZone.innerHTML = `
-      <div class="upload-icon">❌</div>
+      <ion-icon name="alert-circle-outline" class="upload-icon-ion" style="color:var(--red);"></ion-icon>
       <p style="color:var(--red);">${err.message || 'Analysis failed.'}</p>
       <small>Check server connection and try again.</small>
       <input type="file" id="media-upload" accept="image/jpeg,image/png,image/webp" style="display:none;">
     `;
+    document.getElementById('media-upload').addEventListener('change', handleMediaUpload);
   }
 
-  // Clear the file input so the same file can be re-uploaded
+  // Clear the file input so the same file can be re-uploaded if needed
   e.target.value = '';
+}
+
+// Initial listener on the file input (before any innerHTML resets)
+document.getElementById('media-upload').addEventListener('change', handleMediaUpload);
+
+// ─── Media Refresh Button ──────────────────────────────────────
+document.getElementById('media-refresh-btn').addEventListener('click', () => {
+  resetMediaResult();
+  resetUploadZone();
 });
 
 // ─── Init — restore session from storage ──────────────────────

@@ -1,19 +1,6 @@
 """
 config.py
-=========
-Loads all configuration from the .env file using python-dotenv.
 
-Setup
-─────
-1. Copy .env.example → .env  (in the same directory as server.py)
-2. Fill in all values in .env
-3. Add .env to your .gitignore so credentials are never committed
-
-Required packages
-─────────────────
-    pip install pymongo[srv] flask flask-cors PyJWT python-dotenv requests
-
-MongoDB Atlas setup → see .env.example for step-by-step instructions.
 SightEngine setup   → sign up at https://sightengine.com, find keys at
                       https://dashboard.sightengine.com/api-credentials
 """
