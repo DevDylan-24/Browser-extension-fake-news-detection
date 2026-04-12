@@ -129,7 +129,7 @@ This empty file tells Python to treat the `models/` directory as a package, allo
 From the project root directory, start the Flask server:
 
 ```bash
-python server.py
+python -B server.py
 ```
 
 You should see:
