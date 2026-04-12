@@ -1,0 +1,28 @@
+# FactGuard AI — Python Backend Dependencies
+# ============================================================
+# Install all dependencies with:
+#   pip install -r requirements.txt
+#
+# Python 3.10+ required (3.12 recommended)
+# ============================================================
+
+# Web framework
+Flask==3.1.0
+
+# Cross-Origin Resource Sharing — allows the Chrome extension
+# to send requests to the local Flask server
+flask-cors==5.0.0
+
+# MongoDB Atlas driver — [srv] extra adds DNS SRV support
+# required for Atlas connection strings (mongodb+srv://)
+pymongo[srv]==4.10.0
+
+# Environment variable loading from .env file
+python-dotenv==1.0.1
+
+# JSON Web Token creation and verification (user sessions)
+PyJWT==2.9.0
+
+# HTTP requests library — used to call the SightEngine API
+# and the DuckDuckGo Instant Answer API
+requests==2.32.3

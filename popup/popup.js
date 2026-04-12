@@ -160,6 +160,9 @@ function runScan() {
     scanBar.style.width = progress + '%';
   }, 200);
 
+  // Start timer
+  console.time('Scan duration');  
+
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
     const url = tab?.url || '';
@@ -172,6 +175,9 @@ function runScan() {
         const text   = response.text.substring(0, 10000);
         const images = response.images || [];
 
+        console.log(`Text length: ${text.length} characters`);
+        console.log(`Images found: ${images.length}`);
+
         const { status, data } = await apiPost('/predict', {
           text,
           url,
@@ -180,6 +186,9 @@ function runScan() {
         });
 
         if (status !== 200) throw new Error(data.error || 'Analysis failed.');
+
+        // Timing Function
+        console.timeEnd('Scan duration');  
 
         clearInterval(interval);
         scanBar.style.width = '100%';
